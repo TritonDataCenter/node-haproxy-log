@@ -1,0 +1,104 @@
+#!/usr/bin/env node
+/* vim: set ft=javascript ts=8 sts=8 sw=8 noet: */
+
+/*
+ * haplog: command-line tool to transform haproxy logs into JSON objects
+ */
+
+var mod_cmdutil = require('cmdutil');
+var mod_lstream = require('lstream');
+var mod_fs = require('fs');
+var mod_stream = require('stream');
+var mod_util = require('util');
+var VE = require('verror');
+
+var lib_haproxy_log = require('../lib/haproxy_log_parser');
+
+function
+main()
+{
+	var filename, input, lstream, parser, encstream;
+
+	mod_cmdutil.exitOnEpipe();
+	mod_cmdutil.configure({
+		synopses: [ '[FILENAME]' ],
+		usageMessage: 'transform haproxy log files into ' +
+		    'newline-separated JSON'
+	});
+
+	if (process.argv.length > 3) {
+		mod_cmdutil.usage('unexpected arguments');
+	}
+
+	if (process.argv.length > 2) {
+		filename = process.argv[2];
+		input = mod_fs.createReadStream(filename);
+		input.on('error', function (err) {
+			mod_cmdutil.fail(new VE(err, 'read "%s"', filename));
+		});
+	} else {
+		if (process.stdin.isTTY) {
+			console.error('WARNING: reading from tty on stdin');
+		}
+
+		input = process.stdin;
+	}
+
+	lstream = new mod_lstream();
+	parser = new lib_haproxy_log.HAProxyLogTransform();
+	encstream = new JsonEncoderStream();
+
+	input.pipe(lstream);
+	lstream.pipe(parser);
+	parser.pipe(encstream);
+	encstream.pipe(process.stdout);
+
+	parser.on('error', function (err) {
+		/*
+		 * The stream has already stopped at this point, so there's
+		 * nothing we can do but exit.  Ideally, this would generate a
+		 * warning and move on.
+		 */
+		mod_cmdutil.fail(err);
+	});
+}
+
+/*
+ * Object-mode transform stream that accepts arbitrary JavaScript objects
+ * (intended to be simple objects that can be encoded with JSON.stringify()) and
+ * emits newline-separated lines of output, one object per line, with each line
+ * containing the JSON-encoded representation of the object followed by a
+ * newline.
+ *
+ * Failure to encode an object results in a warning to stderr.
+ *
+ * This should likely be moved into node-vstream-json-parser or an analogous
+ * module, with better support for managing the operational error of a bad
+ * object.
+ */
+function
+JsonEncoderStream()
+{
+	var self = this;
+
+	mod_stream.Transform.call(self, { highWaterMark: 0, objectMode: true });
+}
+mod_util.inherits(JsonEncoderStream, mod_stream.Transform);
+
+JsonEncoderStream.prototype._transform = function (obj, _, done) {
+	var self = this;
+	var encoded;
+
+	try {
+		encoded = JSON.stringify(obj);
+	} catch (ex) {
+		console.error('WARNING: failed to encode object: ', obj);
+		setImmediate(done);
+		return;
+	}
+
+	self.push(encoded + '\n');
+	setImmediate(done);
+};
+
+main();
