@@ -1,7 +1,7 @@
 {
 	"name": "haproxy-log",
 	"description": "very basic haproxy log parser",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"main": "./lib/haproxy-log.js",
 	"bin": {
 	    "haplog": "./bin/haplog"
